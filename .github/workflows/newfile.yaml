@@ -1,0 +1,67 @@
+name: Custom CI/CD Workflow For One Repo
+
+on:
+  #pull_request:
+  #  branches:
+  #    - master
+  #push:
+  #  branches:
+  #    - master
+  #schedule:
+  #  - cron: "0 0 * * *"
+
+  workflow_dispatch:
+    
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Install Java
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y default-jre default-jdk
+
+      - name: Build Application with Maven
+        run: mvn clean install -B
+
+      - name: Docker Build
+        run: docker build . --file Dockerfile --tag kaylascho/spring-boot-mongo:${{ github.sha }}
+
+      - name: Docker Login
+        run: echo ${{ secrets.DOCKER_HUB_PASSWORD }} | docker login docker.io -u ${{ secrets.DOCKER_HUB_USERNAME }} --password-stdin
+
+      - name: Docker Push to Docker Hub
+        run: docker push kaylascho/spring-boot-mongo:${{ github.sha }}
+
+      - name: Debug Working Directory
+        run: ls -la
+
+      - name: Debug k8s/springapp Directory
+        run: ls -la ./k8s/springapp
+
+      - name: Display Token
+        run: echo ${{ secrets.PAT_GITHUB_TOKEN }}
+
+      - name: Download and Run Trivy Scan on image
+        run: |
+          wget https://github.com/aquasecurity/trivy/releases/download/v0.19.2/trivy_0.19.2_Linux-64bit.deb
+          sudo dpkg -i trivy_0.19.2_Linux-64bit.deb
+          trivy image kaylascho/spring-boot-mongo:${{ github.sha }}
+
+      - name: Update Version in values.yaml
+        run: |
+          git_hash=$(git rev-parse --short "$GITHUB_SHA")
+          sed -i "s/^  tag: .*/  tag: \"$git_hash\"/" ./k8s/springapp/values.yaml
+          
+          git config --local user.email "orimoloyekayode@yahoo.com"
+          git config --local user.name "kaylascho"
+          
+          git add ./k8s/springapp/values.yaml   # Stage the file for commit
+          git commit -m "Update image tag in values.yaml"
+          git push
+          git push https://${{ secrets.PAT_GITHUB_TOKEN }}@github.com/KaylaschoProject/GitHubAction-ArgoCD.git HEAD:master
